@@ -23,8 +23,10 @@ const FindUserByUsername = async (username) => {
   });
 };
 
-
-const FindUserByUsernameRegex = async (searchInput) => {
-  return await User.find({ fullname: {$regex:searchInput,$options:"i"} });
+const FindUserByUsernameRegex = async (username) => {
+  return await User.find({
+    username: { $regex: username, $options: "i" } 
+  });
 };
+
 export {FindUserById,FindUserByEmail,FindUserByUsername,FindUserByUsernameRegex};

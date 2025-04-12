@@ -18,28 +18,10 @@ try {
       .skip((page - 1) * limit)			
       .limit(parseInt(limit));
 
-
    HandleResponse(res,true,messages,200);
 } catch (error) {
    HandleError(res,false,error.message,500);	
 }
 }
-const GetUnreadMessages = async (req,res) => {
- try {
-   const { receiverId } = req.params;
-   const unreadMessages = await Message.find({
-      receiverId,
-      status: 'sent'
-    });
-   const grouped = unreadMessages.reduce((acc, msg) => {
-      acc[msg.senderId] = (acc[msg.senderId] || 0) + 1;
-      return acc;
-    }, {});
 
-   HandleResponse(res,true,grouped,200);
- } catch (error) {
-   HandleError(res,false,error.message,500);	
- }
-
-}
-export {GetUserMessages,GetUnreadMessages};
+export {GetUserMessages};

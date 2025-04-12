@@ -12,7 +12,6 @@ import UserRouter from './routes/User.Routes.js';
 import StoryRouter from './routes/Story.Routes.js';
 import MessageRouter from './routes/Message.Routes.js';
 import handleSocketEvents from './controllers/Socket.controller.js';
-import requestLogger from './utils/Logger.js';
 
 dotenv.config();
 
@@ -32,7 +31,6 @@ const io = new Server(server, {
 handleSocketEvents(io);
 
 app.use(express.json());
-app.use(requestLogger);
 InitializePassport();
 app.use(session({secret: process.env.JWT_SECRET,resave: false,saveUninitialized: true,}));
 app.use(passport.initialize());

@@ -5,6 +5,7 @@ import ValidateBody from '../utils/ValidateBody.js'
 import {FindUserById,FindUserByUsername,FindUserByEmail, FindUserByUsernameRegex} from '../utils/FindingFunctions.js'
 import HandleResponse from '../utils/HandleResponse.js'
 import HandleError from '../utils/HandleError.js'
+import Notification from '../models/Notification.js'
 
 const Register = async (req, res) => {
  try {
@@ -12,7 +13,7 @@ const Register = async (req, res) => {
 
   const { fullname, email, password,username } = req.body
 
-  const existinguser = await FindUserByEmail(email)
+ const existinguser = await FindUserByEmail(email)
 
   if (existinguser) return HandleResponse(res, false, 'User Already Exits', 409)
 
@@ -156,42 +157,49 @@ const GetProfileName = async (req, res) => {
   HandleError(res, false, error.message, 500)
  }
 }
+
 const GetProfileDetailsByUsername = async (req, res) => {
  try {
-
-  const id = req.user.data || req.user.id;;
+  const id = req.user.data || req.user.id;
 
   const mainuser = await FindUserById(id);
 
-  if (!ValidateBody(['username'], req.params, res)) return
+  if (!ValidateBody(['username'], req.params, res)) return;
 
-  const {username} = req.params;
+  const { username } = req.params;
 
-  const user = await FindUserByUsername(username); 
-  
-  const isfollowing = user.followers.includes(mainuser._id);
+  const user = await User.findOne({username:username}).populate("posts"); 
 
-  if (!user) return HandleResponse(res, false, 'User Not Found', 404)
+  if (!user) return HandleResponse(res, false, 'User Not Found', 404);
+
+  const isFollowing = user.followers.includes(mainuser._id);
+
+  const hasSentFollowRequest = mainuser.sentfollowrequests.some(
+    r => r.userid.toString() === user._id.toString()
+  );
 
   const data = {
    _id: user._id,
-   username:user.username,
+   username: user.username,
    fullname: user.fullname,
    avatar: user.avatar,
    followers: user.followers.length,
    following: user.following.length,
-   posts: user.posts.length,
+   numposts: user.posts.length,
    bio: user.bio,
-   isFollowing:isfollowing
-  }
-  HandleResponse(res, true, data, 200)
+   isFollowing: isFollowing,
+   hasSentFollowRequest: hasSentFollowRequest,
+   posts:user.posts
+   };
+
+  HandleResponse(res, true, data, 200);
  } catch (error) {
-  HandleError(res, false, error.message, 500)
+  HandleError(res, false, error.message, 500);
  }
-}
+};
 
 
-const FollowUser = async (req, res) => {
+const SendFollowRequest = async (req, res) => {
   try {
 
     const userId = req.user.data || req.user.id;
@@ -213,182 +221,301 @@ const FollowUser = async (req, res) => {
 
     const isFollowing = user.following.includes(targetId);
 
-    const updateUser = isFollowing ? { $pull: { following: targetId } } : { $push: { following: targetId } };
+    if (isFollowing) {
+      return HandleResponse(res, false, 'Already following this user', 400);
+    }
 
-    const updateTargetUser = isFollowing ? { $pull: { followers: userId } } : { $push: { followers: userId,notifications: {title: `${user.username} started following you`,timestamp: new Date(),
-            },
-          },
-        };
+    const alreadySent = user.sentfollowrequests.find(r => r.userid.toString() === targetId);
+     
+    if (alreadySent) {
+    return HandleResponse(res,false,"Follow request already sent",400);
+  }
+    const today = new Date();
+    
+    const requestsToday = user.sentfollowrequests.filter(req => {
+    return new Date(req.sentAt).toDateString() === today.toDateString();
+  });
 
-    await Promise.all([
-      User.findByIdAndUpdate(userId, updateUser, { new: true }),
-      User.findByIdAndUpdate(targetId, updateTargetUser, { new: true }),
-    ]);
+    if (requestsToday.length >= 5) {
+    return HandleResponse(res,false,"Daily Follow Request Limit Reached",429);
+  }
 
-    HandleResponse(res,true,isFollowing ? 'Unfollowed Successfully' : 'Followed Successfully',200);
+    const notification = await Notification.create({from:user._id,to:targetUser._id,type:"follow_request",message:`${user.fullname} requested to follow you`,status:'pending'})
+
+    user.sentfollowrequests.push({ userid: targetId });
+    targetUser.followrequests.push(userId);
+    targetUser.notifications.push(notification._id);
+
+    await user.save();
+    await targetUser.save();
+    
+    HandleResponse(res,true,"Follow Request Sent",200);
   } catch (error) {
     HandleError(res, false, error.message, 500);
   }
 };
 
+const CancelFollowRequest = async (req, res) => {
+  try {
+    const userId = req.user.data || req.user.id;
+    const targetId = req.params.id;
 
-const AddClub = async (req, res) => {
- try {
-  const userId = req.user.data || req.user.id;
+    if (userId === targetId) {
+      return HandleResponse(res, false, 'You cannot cancel a request to yourself', 400);
+    }
 
-  const user = await FindUserById(userId, '-password -createdAt')
+    const [user, targetUser] = await Promise.all([
+      User.findById(userId),
+      User.findById(targetId),
+    ]);
 
-  if (!user) return HandleResponse(res, false, 'User Not Found', 404)
+    if (!user || !targetUser) {
+      return HandleResponse(res, false, 'User Not Found', 404);
+    }
 
-  if (!ValidateBody(['name', 'role', 'startyear'], req.body, res)) return
+    const sentRequestIndex = user.sentfollowrequests.findIndex(
+      (r) => r.userid.toString() === targetId
+    );
 
-  const { name, role, startyear } = req.body
+    if (sentRequestIndex === -1) {
+      return HandleResponse(res, false, 'No follow request to cancel', 400);
+    }
 
-  const data = { name, role, startyear }
+    const notification = await Notification.findOneAndDelete({
+      from: userId,
+      to: targetId,
+      type: "follow_request",
+      status: "pending",
+    });
 
-  user.clubs.push(data)
+    if (notification) {
+      targetUser.notifications = targetUser.notifications.filter(
+        (id) => id.toString() !== notification._id.toString()
+      );
+    }
+    user.sentfollowrequests.splice(sentRequestIndex, 1);
 
-  await user.save()
+    targetUser.followrequests = targetUser.followrequests.filter(
+      (id) => id.toString() !== userId
+    );
 
-  HandleResponse(res, true, 'Club Added Successfully', 200)
- } catch (error) {
-  HandleError(res, false, error.message, 500)
- }
-}
+    await Promise.all([user.save(), targetUser.save()]);
 
-const DeleteClub = async (req, res) => {
- try {
-  const userId = req.user.data || req.user.id;
-
-  const user = await FindUserById(userId, '-password -createdAt')
-
-  if (!user) return HandleResponse(res, false, 'User Not Found', 404)
-
-  if (!ValidateBody(['id'], req.body, res)) return
-
-  const { id } = req.body
-
-  for (let i = 0; i < user.clubs.length; i++) {
-   const club = user.clubs[i]
-   if (club._id == id) {
-    user.clubs.splice(i, 1)
-    await user.save()
-    return HandleResponse(res, true, 'Club Deleted Succesfully', 200)
-   }
+    HandleResponse(res, true, 'Follow Request Cancelled Successfully', 200);
+  } catch (error) {
+    HandleError(res, false, error.message, 500);
   }
-  HandleResponse(res, false, 'Achievement Not Found', 404)
- } catch (error) {
-  HandleError(res, false, error.message, 500)
- }
-}
+};
 
-const EditClub = async (req, res) => {
- try {
-  const userId = req.user.data || req.user.id;
+const AcceptFollowRequest = async (req, res) => {
+  try {
+    const userId = req.user.data || req.user.id;
+    const requesterId = req.params.id;
+    const notificationid = req.params.notificationid;
 
-  const user = await FindUserById(userId, '-password -createdAt')
+    if (userId === requesterId) {
+      return HandleResponse(res, false, 'You cannot follow yourself', 400);
+    }
 
-  if (!user) return HandleResponse(res, false, 'User Not Found', 404)
+    const [user, requester] = await Promise.all([
+      User.findById(userId),
+      User.findById(requesterId),
+    ]);
 
-  if (!ValidateBody(['id','name', 'role', 'startyear'], req.body, res)) return
+    if (!user || !requester) {
+      return HandleResponse(res, false, 'User Not Found', 404);
+    }
 
-  const { id, name, role, startyear,endyear } = req.body
+    const requestExists = user.followrequests.includes(requesterId);
 
-  for (let i = 0; i < user.clubs.length; i++) {
-   const old_club = user.clubs[i]
-   if (old_club._id == id) {
-    const club = user.clubs[i]
-    club.name = name
-    club.role = role
-    club.startyear = startyear 
-    club.endyear = endyear
-    await user.save()
-    return HandleResponse(res, true, 'Club Updated Succesfully', 200)
-   }
+    if (!requestExists) {
+      return HandleResponse(res, false, 'No follow request found from this user', 400);
+    }
+
+    await Notification.findByIdAndUpdate(notificationid,{status:"accepted"});
+
+    const notification = await Notification.create({from:userId,to:requesterId,message:`${user.fullname} has accepted your Follow Request`,type:'other',status:'accepted'})
+
+    user.followers.push(requesterId);
+
+    requester.following.push(userId);
+
+    requester.notifications.push(notification._id);
+
+    user.followrequests = user.followrequests.filter(id => id.toString() !== requesterId);
+
+    requester.sentfollowrequests = requester.sentfollowrequests.filter(
+      req => req.userid.toString() !== userId
+    );
+
+    await user.save();
+    await requester.save();
+
+    return HandleResponse(res, true, 'Follow request accepted', 200);
+  } catch (error) {
+    HandleError(res, false, error.message, 500);
   }
-  HandleResponse(res, false, 'Achievement Not Found', 404)
- } catch (error) {
-  HandleError(res, false, error.message, 500)
- }
-}
+};
 
-const AddAchievement = async (req, res) => {
- try {
-  const userId = req.user.data || req.user.id;
+const RejectFollowRequest = async (req, res) => {
+  try {
+    const userId = req.user.data || req.user.id;
+    const requesterId = req.params.id;
+    const notificationid = req.params.notificationid;
 
-  const user = await FindUserById(userId, '-password -createdAt')
+    if (userId === requesterId) {
+      return HandleResponse(res, false, 'You cannot follow yourself', 400);
+    }
 
-  if (!user) return HandleResponse(res, false, 'User Not Found', 404)
+    const [user, requester] = await Promise.all([
+      User.findById(userId),
+      User.findById(requesterId),
+    ]);
 
-  if (!ValidateBody(['title', 'description', 'date'], req.body, res)) return
+    if (!user || !requester) {
+      return HandleResponse(res, false, 'User Not Found', 404);
+    }
 
-  const { title, description, date } = req.body
+    const requestExists = user.followrequests.includes(requesterId);
 
-  const data = { title, description, date }
+    if (!requestExists) {
+      return HandleResponse(res, false, 'No follow request found from this user', 400);
+    }
 
-  user.achievements.push(data)
+    await Notification.findByIdAndUpdate(notificationid,{status:"rejected"});
+	
+   const notification = await Notification.create({from:userId,to:requesterId,message:`${user.fullname} has rejected your Follow Request`,type:'other',status:'rejected'})
 
-  await user.save()
+    user.followrequests = user.followrequests.filter(id => id.toString() !== requesterId);
+    requester.sentfollowrequests = requester.sentfollowrequests.filter(
+      req => req.userid.toString() !== userId
+    );
 
-  HandleResponse(res, true, 'Achievement Added Successfully', 200)
- } catch (error) {
-  HandleError(res, false, error.message, 500)
- }
-}
+    requester.notifications.push(notification._id);
 
-const DeleteAchievement = async (req, res) => {
- try {
-  const userId = req.user.data || req.user.id;
+    await user.save();
+    await requester.save();
 
-  const user = await FindUserById(userId, '-password -createdAt')
-
-  if (!user) return HandleResponse(res, false, 'User Not Found', 404)
-
-  if (!ValidateBody(['id'], req.body, res)) return
-
-  const { id } = req.body
-
-  for (let i = 0; i < user.clubs.length; i++) {
-   const achievement = user.achievements[i]
-   if (achievement._id == id) {
-    user.achievements.splice(i, 1)
-    await user.save()
-    return HandleResponse(res, true, 'Achievement Deleted Succesfully', 200)
-   }
+    return HandleResponse(res, true, 'Follow request rejected', 200);
+  } catch (error) {
+    HandleError(res, false, error.message, 500);
   }
-  HandleResponse(res, false, 'Achievement Not Found', 404)
- } catch (error) {
-  HandleError(res, false, error.message, 500)
- }
+};
+
+const UnfollowUser = async (req, res) => {
+  try {
+    const userId = req.user.data || req.user.id;
+    const targetId = req.params.id;
+
+    if (userId === targetId) {
+      return HandleResponse(res, false, 'You cannot unfollow yourself', 400);
+    }
+
+    const [user, targetUser] = await Promise.all([
+      User.findById(userId),
+      User.findById(targetId),
+    ]);
+
+    if (!user || !targetUser) {
+      return HandleResponse(res, false, 'User not found', 404);
+    }
+
+    const isFollowing = user.following.includes(targetId);
+    const isFollower = targetUser.followers.includes(userId);
+
+    if (!isFollowing || !isFollower) {
+      return HandleResponse(res, false, 'You are not following this user', 400);
+    }
+
+    user.following = user.following.filter(id => id.toString() !== targetId);
+    targetUser.followers = targetUser.followers.filter(id => id.toString() !== userId);
+
+    await Promise.all([user.save(), targetUser.save()]);
+
+    HandleResponse(res, true, 'Unfollowed successfully', 200);
+  } catch (error) {
+    HandleError(res, false, error.message, 500);
+  }
+};
+
+const FetchAllNotifications = async (req,res) => {
+try {
+   const userid = req.user.data || req.user.id;
+
+   const notifications = await Notification.find({ to: userid })
+  .populate('from', 'username avatar') // populate sender's data
+  .populate('to', 'username avatar') // populate recipient's data
+  .populate('postid', 'title content') // populate post details
+  .sort({ timestamp: -1 }) // sort by newest first
+  .exec();
+
+
+   if(!notifications) return HandleResponse(res,false,"No Notifications Yet",400);
+
+   HandleResponse(res,true,notifications,200);
+ 
+} catch (error) {
+    HandleError(res, false, error.message, 500);
+
+}
 }
 
-const EditAchievement = async (req, res) => {
- try {
-  const userId = req.user.data || req.user.id;
-
-  const user = await FindUserById(userId, '-password -createdAt')
-
-  if (!user) return HandleResponse(res, false, 'User Not Found', 404)
-
-  if (!ValidateBody(['id', 'title', 'description', 'date'], req.body, res)) return
-
-  const { id, title, description, date } = req.body
-
-  for (let i = 0; i < user.clubs.length; i++) {
-   const old_achievement = user.achievements[i]
-   if (old_achievement._id == id) {
-    const achievment = user.achievements[i]
-    achievment.title = title
-    achievment.description = description
-    achievment.date = date
-    await user.save()
-    return HandleResponse(res, true, 'Achievement Updated Succesfully', 200)
+const MarkSeenNotification = async (req,res) => {
+try {
+   const id = req.params.notificationid;
+   const notification = await Notification.findById(id);
+   if(notification.isseen)
+   {
+     notification.isseen = false;
+     await notification.save();
+     return HandleResponse(res,true,"Notification Marked as Unseen Successfully",200);
    }
-  }
-  HandleResponse(res, false, 'Achievement Not Found', 404)
- } catch (error) {
-  HandleError(res, false, error.message, 500)
- }
+   notification.isseen = true;
+
+   await notification.save();
+
+   HandleResponse(res,true,"Notification Marked as Seen Successfully",200);
+} catch (error) {
+    HandleError(res, false, error.message, 500);
+
+}
+}
+
+const MarkAllNotificationSeen = async (req,res) => {
+try {
+   const id = req.user.data || req.user.id;
+
+   const user = await User.findById(id);
+
+   const notifications = user.notifications;
+
+   await Promise.all(
+    notifications.map((element) =>
+    Notification.findByIdAndUpdate(element.toString(), { isseen: true }, { new: true })
+   )
+  );
+   HandleResponse(res,true,"All Notification Marked as Seen",200);
+} catch (error) {
+    HandleError(res, false, error.message, 500);
+}
+}
+
+const GetNotificationsCount = async (req,res) => {
+try {	
+   const id = req.user.data || req.user.id;
+
+   const user = await User.findById(id).populate("notifications");
+
+   const notifications = user.notifications;
+
+   const count = notifications.filter((element) => element.isseen === false).length;
+
+   HandleResponse(res,true,count,200);
+
+} catch (error) {
+    HandleError(res, false, error.message, 500);
+}
+
 }
 
 const GetAllUsers = async (req, res) => {
@@ -413,7 +540,10 @@ const GetUserByUsername = async (req, res) => {
 
     const { username } = req.params;
 
-    const users = await FindUserByUsernameRegex(username); 
+    console.log(await User.find({}));
+
+    const users = await FindUserByUsernameRegex(username);
+
 
     if (!users || users.length === 0) {
       return HandleResponse(res, false, "No users found", 404);
@@ -433,4 +563,4 @@ const GetUserByUsername = async (req, res) => {
   }
 };
 
-export { Register,GoogleLogin,Login, GetEmailNameAvatar, GetProfileDetails, EditProfile, FollowUser, AddClub ,DeleteClub,EditClub,AddAchievement, DeleteAchievement, EditAchievement, GetAllUsers,GetUserByUsername,GetProfileDetailsByUsername,GetProfileName}
+export { Register,GoogleLogin,Login, GetEmailNameAvatar, GetProfileDetails, EditProfile, SendFollowRequest,CancelFollowRequest,AcceptFollowRequest,RejectFollowRequest,GetAllUsers,GetUserByUsername,GetProfileDetailsByUsername,GetProfileName,FetchAllNotifications,UnfollowUser,MarkSeenNotification,MarkAllNotificationSeen,GetNotificationsCount}

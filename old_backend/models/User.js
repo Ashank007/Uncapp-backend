@@ -51,13 +51,11 @@ const userSchema = new mongoose.Schema(
 				ref: 'Post'
 			}
 		],
-		notifications: [{type:mongoose.Schema.Types.ObjectId,ref:'Notification'}],
+		notifications:[{title:{type:String},timestamp:{type:Date,default:Date.now}}],
 		followers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
 		following: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-		followrequests: [{type:mongoose.Schema.Types.ObjectId,ref:'User'}],
-		sentfollowrequests : [{userid:{type:mongoose.Schema.Types.ObjectId,ref:'User'},sentAt:{type:Date,default:Date.now}}],
-		achievements: [{ title: { type: String }, level: { type: String }, date: { type: String }, club: { type: String }, media: { type: String }, postion:{type:String} }],
-		clubs: [{ name: { type: String }, role: { type: String }, startyear: { type: String }, endyear: { type: String } }],
+		achievements: [{ title: { type: String }, description: { type: String }, date: { type: String }, club: { type: String } }],
+		clubs:[{name:{type:String},role:{type:String},startyear:{type:String},endyear:{type:String}}],
 		savedposts: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Post' }]
 	},
 	{ versionKey: false }
