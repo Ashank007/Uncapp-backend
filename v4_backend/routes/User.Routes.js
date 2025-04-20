@@ -1,0 +1,70 @@
+import express from 'express'
+import {
+  EditProfile,
+  GetProfileDetails,
+  GetEmailNameAvatar,
+  Login,
+  Register,
+  GetAllUsers,
+  GetUserByUsername,
+  GoogleLogin,
+  GetProfileDetailsByUsername,
+  GetProfileName,
+  GetUserFollowers,
+  GetUserFollowings,
+  GetUserAvatar,
+  AddAthleteDetails,
+  GetAthleteDetails,
+  DeletePersonalBest,
+  DeleteSeasonBest,
+  EditPersonalBest,
+  EditSeasonBest
+} from '../controllers/User.Controller.js'
+import { SendFollowRequest, CancelFollowRequest, AcceptFollowRequest, RejectFollowRequest, UnfollowUser } from '../controllers/Follow.Controller.js'
+import { FetchAllNotifications, MarkSeenNotification, MarkAllNotificationSeen, GetNotificationsCount } from '../controllers/Notification.Controller.js'
+import { AddClub, DeleteClub, EditClub, AddAchievement, DeleteAchievement, EditAchievement } from '../controllers/Club_Achievement.Controller.js'
+import isauthenticated from '../middlewares/isauthenticated.js'
+
+const UserRouter = express.Router()
+UserRouter.post('/register', Register);
+UserRouter.post('/googlelogin', GoogleLogin);
+UserRouter.post('/login', Login);
+UserRouter.get('/get/:username', isauthenticated, GetUserByUsername);
+UserRouter.get('/data', isauthenticated, GetEmailNameAvatar);
+UserRouter.get('/profile', isauthenticated, GetProfileDetails);
+UserRouter.get('/profile/id/:id', GetProfileName);
+UserRouter.get('/profile/:username', isauthenticated, GetProfileDetailsByUsername);
+UserRouter.put('/edit', isauthenticated, EditProfile);
+UserRouter.get('/all', isauthenticated, GetAllUsers);
+UserRouter.get('/followers', isauthenticated, GetUserFollowers);
+UserRouter.get('/following', isauthenticated, GetUserFollowings);
+UserRouter.get('/avatar', isauthenticated, GetUserAvatar);
+
+UserRouter.get('/athletedetails', isauthenticated, GetAthleteDetails);
+UserRouter.post('/athletedetails', isauthenticated, AddAthleteDetails);
+UserRouter.put('/atheletedetails/edit/personalrecord', isauthenticated, EditPersonalBest);
+UserRouter.put('/atheletedetails/edit/seasonrecord', isauthenticated, EditSeasonBest);
+
+UserRouter.delete('/athletedetails/delete/personalrecord', isauthenticated, DeletePersonalBest);
+UserRouter.delete('/athletedetails/delete/seasonrecord', isauthenticated, DeleteSeasonBest);
+
+UserRouter.get('/follow/accept/:id/:notificationid', isauthenticated, AcceptFollowRequest);
+UserRouter.get('/follow/reject/:id/:notificationid', isauthenticated, RejectFollowRequest);
+UserRouter.get('/follow/:id', isauthenticated, SendFollowRequest);
+UserRouter.get('/unfollow/:id', isauthenticated, UnfollowUser);
+UserRouter.delete('/follow/cancel/:id', isauthenticated, CancelFollowRequest);
+
+UserRouter.post('/club', isauthenticated, AddClub);
+UserRouter.delete('/club', isauthenticated, DeleteClub);
+UserRouter.put('/club', isauthenticated, EditClub);
+UserRouter.post('/achievement', isauthenticated, AddAchievement);
+UserRouter.delete('/achievement', isauthenticated, DeleteAchievement);
+UserRouter.put('/achievement', isauthenticated, EditAchievement);
+
+UserRouter.get('/notifications', isauthenticated, FetchAllNotifications);
+UserRouter.put('/notification/seen/:notificationid', isauthenticated, MarkSeenNotification);
+UserRouter.put('/notifications/seen/all', isauthenticated, MarkAllNotificationSeen);
+UserRouter.get('/notifications/count', isauthenticated, GetNotificationsCount);
+
+
+export default UserRouter
